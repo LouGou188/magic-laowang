@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>迷宫</title>
+<style>
+  :root{
+    --bg:#0b0d12; --panel:#161a23; --line:#262c3a; --fg:#e7eaf2;
+    --dim:#7e8598; --acc:#3ec9ff; --gold:#f0b429; --danger:#ff5d5d;
+  }
+  *{box-sizing:border-box;user-select:none;-webkit-user-select:none;}
+  html,body{margin:0;height:100%;}
+  body{
+    background:radial-gradient(1100px 700px at 50% -10%, #1a2130 0%, var(--bg) 60%);
+    color:var(--fg);
+    font-family:system-ui,"Segoe UI","Microsoft YaHei",sans-serif;
+    display:flex;flex-direction:column;align-items:center;
+    min-height:100vh;padding:18px 12px;
+  }
+  .wrap{width:min(1000px,100%);}
+  .top{
+    display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+    margin-bottom:10px;
+  }
+  .top .brand{font-size:15px;letter-spacing:.3em;font-weight:700;color:var(--acc);}
+  .top .stat{font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums;letter-spacing:.06em;}
+  .top .spacer{flex:1;}
+  .btn{
+    appearance:none;border:1px solid var(--line);background:var(--panel);color:var(--fg);
+    height:36px;min-width:36px;padding:0 14px;border-radius:9px;font-size:13px;cursor:pointer;
+    display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  }
+  .btn:hover{filter:brightness(1.3);}
+  .btn:active{transform:translateY(1px);}
+  .hint{font-size:12px;color:var(--dim);margin:8px 2px 0;letter-spacing:.04em;line-height:1.7;}
+  .stage{
+    position:relative;border:1px solid var(--line);border-radius:14px;overflow:hidden;
+    background:#06070b;box-shadow:0 18px 60px rgba(0,0,0,.55);
+  }
+  canvas#view{display:block;width:100%;aspect-ratio:960/640;}
+  .cover{
+    position:absolute;inset:0;z-index:6;background:rgba(6,8,13,.88);
+    display:flex;flex-direction:column;gap:18px;align-items:center;justify-content:center;
+    text-align:center;padding:20px;
+  }
+  .cover.hidden{display:none;}
+  .cover .t{font-size:22px;letter-spacing:.5em;font-weight:800;color:var(--acc);}
+  .cover .d{font-size:13px;color:var(--dim);line-height:2;max-width:520px;}
+  .btn.big{height:52px;padding:0 34px;font-size:16px;border-radius:12px;background:var(--acc);color:#07121a;border:none;font-weight:700;letter-spacing:.2em;}
+  .overlay{
+    position:absolute;inset:0;z-index:5;background:rgba(6,8,13,.55);
+    display:flex;align-items:center;justify-content:center;padding:18px;
+  }
+  .overlay.hidden{display:none;}
+  .card{
+    background:var(--panel);border:1px solid var(--line);border-radius:16px;
+    padding:20px;min-width:min(320px,86vw);text-align:center;
+    box-shadow:0 24px 70px rgba(0,0,0,.6);
+  }
+  .card h2{margin:0 0 14px;font-size:16px;letter-spacing:.25em;color:var(--fg);font-weight:600;}
+  .digits{
+    display:flex;gap:10px;justify-content:center;margin:4px 0 18px;
+  }
+  .digits i{
+    width:46px;height:58px;border-radius:10px;border:2px solid var(--line);
+    background:#0e1119;font-style:normal;font-size:26px;font-weight:700;
+    display:flex;align-items:center;justify-content:center;color:var(--gold);
+    font-variant-numeric:tabular-nums;
+  }
+  .digits i.on{border-color:var(--gold);box-shadow:0 0 14px rgba(240,180,41,.25);}
+  .pad{
+    display:grid;grid-template-columns:repeat(3,64px);gap:9px;justify-content:center;
+  }
+  .pad button{
+    height:48px;border-radius:11px;border:1px solid var(--line);background:#0e1119;
+    color:var(--fg);font-size:18px;cursor:pointer;
+  }
+  .pad button:hover{filter:brightness(1.5);}
+  .pad button.act{background:var(--gold);color:#151005;border-color:transparent;font-weight:700;}
+  .card .hint2{font-size:12px;color:var(--dim);margin-top:14px;letter-spacing:.1em;}
+  .modal{
+    position:absolute;inset:0;z-index:7;background:rgba(5,6,10,.7);
+    display:flex;align-items:center;justify-content:center;padding:18px;
+  }
+  .modal.hidden{display:none;}
+  .pop{
+    background:var(--panel);border:1px solid var(--line);border-radius:16px;
+    padding:26px 30px;max-width:min(520px,88vw);text-align:center;
+    box-shadow:0 26px 80px rgba(0,0,0,.65);
+  }
+  .pop .big{
+    font-size:30px;font-weight:800;letter-spacing:.12em;color:var(--acc);
+    font-family:Consolas,"Courier New",monospace;word-break:break-all;margin:6px 0 4px;
+  }
+  .pop .msg{font-size:16px;line-height:1.9;color:var(--fg);margin:8px 0 18px;}
+  .pop .msg.warn{color:#ffd7a0;}
+  .pop .okbtn{
+    border:none;background:var(--acc);color:#07121a;font-weight:700;letter-spacing:.15em;
+    padding:10px 30px;border-radius:10px;cursor:pointer;font-size:14px;
+  }
+  .pop .okbtn.gold{background:var(--gold);color:#191102;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <span class="brand">迷 宫</span>
+    <span class="stat" id="stat">0 步 · 00:00</span>
+    <span class="spacer"></span>
+    <button class="btn" id="muteBtn" title="声音">🔊</button>
+    <button class="btn" id="resetBtn">↺ 新迷宫</button>
+  </div>
+  <div class="stage" id="stage">
+    <canvas id="view" width="960" height="640"></canvas>
+
+    <div class="cover" id="cover">
+      <div class="t">迷 宫</div>
+      <div class="d">一片迷雾封住了去路。<br/>找到金门，用四位密码打开它。</div>
+      <button class="btn big" id="startBtn">进 入</button>
+    </div>
+
+    <div class="overlay hidden" id="keypadOverlay">
+      <div class="card">
+        <h2>密码门</h2>
+        <div class="digits" id="digits">
+          <i></i><i></i><i></i><i></i>
+        </div>
+        <div class="pad" id="pad"></div>
+        <div class="hint2">四位密码 · 输错无妨，可再试</div>
+      </div>
+    </div>
+
+    <div class="modal hidden" id="modal">
+      <div class="pop">
+        <div class="big" id="popBig" style="display:none;"></div>
+        <div class="msg" id="popMsg"></div>
+        <button class="okbtn" id="popOk">确 定</button>
+      </div>
+    </div>
+  </div>
+  <div class="hint">方向键 / WASD 移动，也可用下方圆盘 · 迷宫深处有一座金色大门 · 出口即门</div>
+  <div id="dpad"></div>
+</div>
+
+<script>
+"use strict";
+/* =========================================================
+   常量 / 配置
+   ========================================================= */
+const VIEW_W = 960, VIEW_H = 640;
+const N   = 47;          // 迷宫规模：47×47 格（大而绕，配合迷雾更艰难）
+const B   = 16;          // 每个 bitmap 块的像素边长（走廊宽 = B）
+const G   = 2 * N + 1;   // bitmap 边长（块数）
+const SPEED = 148;       // 移动速度 px/s
+const R_PLAYER = 6.5;    // 玩家碰撞半径
+const FOG_R = 225;       // 可见光圈半径（逻辑像素）
+const MAP_PX = G * B;
+
+/* =========================================================
+   迷宫数据与生成（递归回溯 → 单通道长回廊迷宫）
+   ========================================================= */
+let grid;            // Uint8Array：1=墙 0=通路
+let mapCanvas = null;
+let seedStats = {};
+
+function makeMaze(){
+  grid = new Uint8Array(G * G).fill(1);
+  const visited = new Uint8Array(N * N);
+  const dirs = [[-1,0],[1,0],[0,-1],[0,1]];
+  const stack = [[0,0]];
+  visited[0] = 1;
+  const at = (r,c) => (2*r+1) * G + (2*c+1);
+  grid[at(0,0)] = 0;
+  while (stack.length){
+    const cur = stack[stack.length - 1];
+    const [r,c] = cur;
+    const opts = [];
+    for (const [dr,dc] of dirs){
+      const nr = r + dr, nc = c + dc;
+      if (nr >= 0 && nc >= 0 && nr < N && nc < N && !visited[nr*N+nc]){
+        opts.push([nr,nc,dr,dc]);
+      }
+    }
+    if (!opts.length){ stack.pop(); continue; }
+    const pick = opts[(Math.random()*opts.length)|0];
+    const [nr,nc,dr,dc] = pick;
+    visited[nr*N+nc] = 1;
+    const wr = r + nr + 1, wc = c + nc + 1; // 中间墙块的坐标（偶数）
+    grid[wr*G + wc] = 0;
+    grid[at(nr,nc)] = 0;
+    stack.push([nr,nc]);
+  }
+  return grid;
+}
+
+const isSolid = (ix,iy) =>
+  ix < 0 || iy < 0 || ix >= G || iy >= G || grid[iy*G + ix] === 1;
+
+/* 渲染整张迷宫到离屏画布（只画一次） */
+function buildMap(){
+  mapCanvas = document.createElement("canvas");
+  mapCanvas.width = MAP_PX;
+  mapCanvas.height = MAP_PX;
+  const m = mapCanvas.getContext("2d");
+  m.fillStyle = "#f4f5f9";           // 地板（白）
+  m.fillRect(0, 0, MAP_PX, MAP_PX);
+  m.fillStyle = "#141821";           // 墙（黑）
+  for (let y = 0; y < G; y++){
+    for (let x = 0; x < G; x++){
+      if (grid[y*G + x]) m.fillRect(x*B, y*B, B, B);
+    }
+  }
+  // 起点小标记（左上角通路格）
+  const sx = B * 1 + B/2, sy = B * 1 + B/2;
+  m.beginPath(); m.arc(sx, sy, B*0.28, 0, 7); m.fillStyle = "#22d3a5"; m.fill();
+  // 终点金门（右下角通路格）
+  const ex = B * (2*(N-1)+1) + B/2, ey = B * (2*(N-1)+1) + B/2;
+  m.fillStyle = "#f5e7c0";
+  m.fillRect(ex - B*0.7, ey - B*0.7, B*1.4, B*1.4);
+  m.fillStyle = "#0d0f15";
+  m.fillRect(ex - B*0.42, ey - B*0.5, B*0.24, B);
+  m.fillRect(ex + B*0.18, ey - B*0.5, B*0.24, B);
+  m.fillStyle = "#b8860b";
+  m.beginPath(); m.arc(ex, ey + B*0.1, B*0.14, 0, 7); m.fill();
+  seedStats = { ex, ey, sx, sy };
+}
+
+/* =========================================================
+   玩家状态
+   ========================================================= */
+const view = document.getElementById("view");
+const vctx = view.getContext("2d");
+const dpr = Math.min(window.devicePixelRatio || 1, 2);
+view.width  = VIEW_W * dpr;
+view.height = VIEW_H * dpr;
+vctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+let px, py;            // 玩家中心（地图像素坐标）
+let camX, camY;
+let keys = new Set();
+let steps = 0, lastCell = -1, wasInExit = false;
+let solved = false;
+let started = false;
+let t0 = 0, timerMs = 0;
+let lastTs = 0;
+const EXIT_CELL = (N - 1) * N + (N - 1);
+
+function resetPos(){
+  px = B * 1 + B/2;
+  py = B * 1 + B/2;
+  lastCell = 0;
+  wasInExit = false;
+  steps = 0; solved = false;
+  centerCam();
+}
+
+function centerCam(){
+  camX = px - VIEW_W/2;
+  camY = py - VIEW_H/2;
+  camX = Math.max(0, Math.min(MAP_PX - VIEW_W, camX));
+  camY = Math.max(0, Math.min(MAP_PX - VIEW_H, camY));
+}
+
+function circleFree(cx, cy, r){
+  const x0 = Math.floor((cx - r) / B), x1 = Math.floor((cx + r) / B);
+  const y0 = Math.floor((cy - r) / B), y1 = Math.floor((cy + r) / B);
+  for (let y = y0; y <= y1; y++)
+    for (let x = x0; x <= x1; x++)
+      if (isSolid(x, y)) return false;
+  return true;
+}
+
+function moveAxis(dx, dy){
+  const dist = Math.hypot(dx, dy);
+  if (dist === 0) return;
+  const stepsN = Math.ceil(dist / 2);
+  const sx = dx / stepsN, sy = dy / stepsN;
+  for (let i = 0; i < stepsN; i++){
+    if (circleFree(px + sx, py + sy, R_PLAYER)){
+      px += sx; py += sy;
+    } else {
+      // 尝试仅沿单轴滑动，避免被墙角卡死
+      if (circleFree(px + sx, py, R_PLAYER)) px += sx;
+      if (circleFree(px, py + sy, R_PLAYER)) py += sy;
+      break;
+    }
+  }
+  centerCam();
+  const bx = Math.round(px / B - 0.5), by = Math.round(py / B - 0.5);
+  if ((bx & 1) && (by & 1)){
+    const ci = ((bx - 1) / 2) * N + (by - 1) / 2;
+    if (ci !== lastCell){
+      const nowInExit = ci === EXIT_CELL;
+      lastCell = ci;
+      steps++;
+      // 刚踏入金门格的那一瞬间弹密码盘（之后可自由离开，不会反复弹出）
+      if (nowInExit && !wasInExit && !solved) openKeypad();
+      wasInExit = nowInExit;
+    }
+  }
+}
+
+const KEYMAP = {
+  ArrowUp: [0,-1], KeyW: [0,-1], w: [0,-1],
+  ArrowDown: [0,1], KeyS: [0,1], s: [0,1],
+  ArrowLeft: [-1,0], KeyA: [-1,0], a: [-1,0],
+  ArrowRight: [1,0], KeyD: [1,0], d: [1,0]
+};
+
+/* =========================================================
+   主循环
+   ========================================================= */
+function frame(ts){
+  if (started){
+    let dt = 0.016;                       // 默认增量，避免首帧 lastTs 为空时 dt 未定义
+    if (lastTs) {
+      dt = Math.min(0.05, (ts - lastTs) / 1000);
+      timerMs += dt * 1000;
+    }
+    lastTs = ts;
+    let dx = 0, dy = 0;
+    if (!solved && keypadHidden()){      // 门未解且未弹密码盘时才能走
+      for (const k of keys){
+        const v = KEYMAP[k];
+        if (v){ dx += v[0]; dy += v[1]; }
+      }
+      if (dx || dy){
+        const len = Math.hypot(dx, dy);
+        moveAxis(dx/len * SPEED * dt, dy/len * SPEED * dt);
+      }
+    }
+  }
+  draw(ts);
+  requestAnimationFrame(frame);
+}
+
+let lastTimerShown = -1, lastStepsShown = -1;
+function draw(ts){
+  const w = VIEW_W, h = VIEW_H;
+  vctx.fillStyle = "#06070b";
+  vctx.fillRect(0, 0, w, h);
+
+  // 相机视野内地图块
+  const bx0 = Math.max(0, Math.floor(camX / B)), by0 = Math.max(0, Math.floor(camY / B));
+  const bx1 = Math.min(G - 1, Math.ceil((camX + w) / B)), by1 = Math.min(G - 1, Math.ceil((camY + h) / B));
+  const sx = bx0 * B, sy = by0 * B;
+  const sw = (bx1 - bx0) * B, sh = (by1 - by0) * B;
+  const ox = sx - camX, oy = sy - camY;
+  vctx.drawImage(mapCanvas, sx, sy, sw, sh, ox, oy, sw, sh);
+
+  // 迷雾（圆形可视光圈）
+  const scrX = px - camX, scrY = py - camY;
+  const grad = vctx.createRadialGradient(scrX, scrY, 0, scrX, scrY, FOG_R);
+  grad.addColorStop(0.00, "rgba(5,6,10,0)");
+  grad.addColorStop(0.55, "rgba(5,6,10,0.05)");
+  grad.addColorStop(1.00, "rgba(5,6,10,0.985)");
+  vctx.fillStyle = grad;
+  vctx.fillRect(0, 0, w, h);
+
+  // 玩家（发光圆点）
+  const prx = scrX, pry = scrY;
+  const g2 = vctx.createRadialGradient(prx, pry, 1, prx, pry, 26);
+  g2.addColorStop(0, "rgba(30,220,170,0.55)");
+  g2.addColorStop(1, "rgba(30,220,170,0)");
+  vctx.fillStyle = g2;
+  vctx.beginPath(); vctx.arc(prx, pry, 26, 0, 7); vctx.fill();
+  vctx.fillStyle = "#26e6bb";
+  vctx.beginPath(); vctx.arc(prx, pry, 5.5, 0, 7); vctx.fill();
+
+  // 金门脉冲光（若在视野内）
+  if (!solved){
+    const dEx = seedStats.ex - camX, dEy = seedStats.ey - camY;
+    const dCam = Math.hypot(dEx - scrX, dEy - scrY);
+    if (dCam < FOG_R - 14 && dEx > -40 && dEx < w + 40 && dEy > -40 && dEy < h + 40){
+      const p = 0.5 + 0.5 * Math.sin(ts / 260);
+      vctx.strokeStyle = "rgba(255,196,70," + (0.25 + p * 0.4) + ")";
+      vctx.lineWidth = 3;
+      vctx.beginPath(); vctx.arc(dEx, dEy, 10 + p * 3, 0, 7); vctx.stroke();
+    }
+  }
+
+  // 计时 / 步数 UI
+  const sec = Math.floor(timerMs / 1000);
+  if (sec !== lastTimerShown || steps !== lastStepsShown){
+    lastTimerShown = sec; lastStepsShown = steps;
+    const mm = String(Math.floor(sec / 60)).padStart(2, "0");
+    const ss = String(sec % 60).padStart(2, "0");
+    document.getElementById("stat").textContent = steps + " 步 · " + mm + ":" + ss;
+  }
+}
+
+/* =========================================================
+   界面：开始 / 密码盘 / 弹窗
+   ========================================================= */
+const $ = id => document.getElementById(id);
+const keypadHidden = () => $("keypadOverlay").classList.contains("hidden");
+
+let code = [];
+function renderDigits(){
+  const ds = document.querySelectorAll("#digits i");
+  ds.forEach((el, i) => {
+    el.textContent = i < code.length ? code[i] : "";
+    el.classList.toggle("on", i === code.length);
+  });
+}
+function buildPad(){
+  const pad = $("pad");
+  const cell = (label, cls, fn) => {
+    const b = document.createElement("button");
+    b.textContent = label;
+    if (cls) b.className = cls;
+    b.addEventListener("click", fn);
+    pad.appendChild(b);
+  };
+  for (let d = 1; d <= 9; d++) cell(d, null, () => pushDigit(d));
+  cell("⌫", "act", () => { code.pop(); renderDigits(); });
+  cell("0", null, () => pushDigit(0));
+  cell("确 认", "act", confirmCode);
+}
+function pushDigit(d){
+  if (code.length >= 4) return;
+  code.push(d);
+  renderDigits();
+  if (code.length === 4) confirmCode();
+}
+function confirmCode(){
+  const guess = code.join("");
+  if (guess === "0815"){
+    solved = true;
+    code = [];
+    closeKeypad();
+    showModal(null, "3546577551493932", true);
+  } else {
+    code = [];
+    renderDigits();
+    showModal("月有阴晴圆缺，人有悲欢离合。", null, false);
+  }
+}
+
+let modalCallback = null;
+function showModal(msgText, bigText, gold){
+  const big = $("popBig"), msg = $("popMsg"), ok = $("popOk");
+  if (bigText){ big.style.display = "block"; big.textContent = bigText; }
+  else big.style.display = "none";
+  msg.textContent = msgText || "";
+  msg.classList.toggle("warn", !gold);
+  ok.classList.toggle("gold", !!gold);
+  $("modal").classList.remove("hidden");
+}
+function closeModal(){
+  $("modal").classList.add("hidden");
+  if (modalCallback){ const cb = modalCallback; modalCallback = null; cb(); }
+}
+$("popOk").addEventListener("click", closeModal);
+
+function openKeypad(){
+  if (!keypadHidden() || solved) return;
+  code = [];
+  renderDigits();
+  $("keypadOverlay").classList.remove("hidden");
+}
+function closeKeypad(){ $("keypadOverlay").classList.add("hidden"); }
+$("keypadOverlay").addEventListener("click", ev => {
+  if (ev.target === $("keypadOverlay")) closeKeypad();
+});
+
+/* =========================================================
+   白噪音背景音 —— 摩斯编码 "bilibili"
+   b -...   i ..   l .-..
+   ========================================================= */
+const MORSE = {
+  a:".-",b:"-...",c:"-.-.",d:"-..",e:".",f:"..-.",g:"--.",h:"....",
+  i:"..",j:".---",k:"-.-",l:".-..",m:"--",n:"-.",o:"---",p:".--.",
+  q:"--.-",r:".-.",s:"...",t:"-",u:"..-",v:"...-",w:".--",x:"-..-",
+  y:"-.--",z:"--.."
+};
+const U = 0.1, AMP_ON = 0.9, AMP_BED = 0.04;
+
+function buildNoiseSegments(msg){
+  const segs = [];
+  let t = 0.05;
+  const chars = [...msg];
+  for (let i = 0; i < chars.length; i++){
+    const code = MORSE[chars[i]];
+    if (!code) continue;
+    const next = chars[i + 1];
+    for (let s = 0; s < code.length; s++){
+      const dur = code[s] === "." ? U : U * 3;
+      segs.push({ start: t, end: t + dur });
+      t += dur;
+      if (s < code.length - 1) t += U;
+    }
+    if (next !== undefined) t += U * 3;
+  }
+  t += 0.4;
+  return { segs, cycle: t };
+}
+const SEG = buildNoiseSegments("bilibili");
+
+let actx = null, master = null, noiseBuf = null;
+let schedTimer = null, nextCycle = null;
+const liveSources = new Set();
+
+function initAudio(){
+  if (actx) return;
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return;
+  actx = new AC();
+  master = actx.createGain();
+  master.gain.value = 0.6;
+  master.connect(actx.destination);
+  const len = Math.max(3, SEG.cycle + 1);
+  noiseBuf = actx.createBuffer(1, Math.ceil(len * actx.sampleRate), actx.sampleRate);
+  const d = noiseBuf.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  nextCycle = actx.currentTime + 0.1;
+  schedTimer = setInterval(schedule, 120);
+}
+function schedule(){
+  if (!actx || !started) return;
+  if (actx.state !== "running"){ actx.resume(); return; }
+  const horizon = actx.currentTime + 0.6;
+  while (nextCycle < horizon){
+    playCycle(nextCycle);
+    nextCycle += SEG.cycle;
+  }
+}
+function playCycle(base){
+  const src = actx.createBufferSource();
+  src.buffer = noiseBuf; src.loop = true;
+  const g = actx.createGain();
+  g.gain.value = AMP_BED;
+  src.connect(g); g.connect(master);
+  src.start(base);
+  for (const sg of SEG.segs){
+    g.gain.setTargetAtTime(AMP_ON,  base + sg.start, 0.012);
+    g.gain.setTargetAtTime(AMP_BED, base + sg.end,   0.012);
+  }
+  src.stop(base + SEG.cycle + 0.05);
+  liveSources.add(src);
+  src.onended = () => liveSources.delete(src);
+}
+
+/* =========================================================
+   事件与控制
+   ========================================================= */
+let muted = false;
+function begin(){
+  if (started) return;
+  started = true;
+  initAudio();
+  if (actx) actx.resume();
+  t0 = performance.now();
+  lastTs = 0;
+  $("cover").classList.add("hidden");
+}
+
+$("startBtn").addEventListener("click", begin);
+$("resetBtn").addEventListener("click", () => {
+  makeMaze(); buildMap(); resetPos();
+  lastTimerShown = -1; timerMs = 0;
+  code = []; solved = false;
+  closeKeypad(); closeModal();
+  renderDigits();
+});
+$("muteBtn").addEventListener("click", () => {
+  muted = !muted;
+  $("muteBtn").textContent = muted ? "🔇" : "🔊";
+  if (master) master.gain.value = muted ? 0 : 0.6;
+});
+
+window.addEventListener("keydown", ev => {
+  if (ev.code === "Space" || ev.code.startsWith("Arrow")) ev.preventDefault();
+  if (KEYMAP[ev.code] || KEYMAP[ev.key]) keys.add(ev.code in KEYMAP ? ev.code : ev.key);
+  // 密码盘内支持键盘输入
+  if (!keypadHidden() && !solved){
+    if (/^Digit\d$/.test(ev.code)) pushDigit(+ev.code.slice(5));
+    else if (/^[0-9]$/.test(ev.key)) pushDigit(+ev.key);
+    else if (ev.code === "Backspace"){ code.pop(); renderDigits(); }
+    else if (ev.code === "Enter"){ if (code.length === 4) confirmCode(); }
+  }
+});
+window.addEventListener("keyup", ev => {
+  keys.delete(ev.code in KEYMAP ? ev.code : ev.key);
+});
+
+/* 触屏方向圆盘 */
+(function makeDpad(){
+  const host = document.getElementById("dpad");
+  const acts = { up:[0,-1], down:[0,1], left:[-1,0], right:[1,0] };
+  for (const k of ["up","left","down","right"]){
+    const b = document.createElement("button");
+    b.textContent = { up:"▲", down:"▼", left:"◀", right:"▶" }[k];
+    b.style.cssText = "width:52px;height:52px;margin:3px;border-radius:12px;background:#161a23;color:#e7eaf2;font-size:16px;border:1px solid #262c3a;cursor:pointer;";
+    const codeName = "dpad_" + k;
+    const set = on => {
+      const v = acts[k];
+      const keyName = v[1] === -1 ? "ArrowUp" : v[1] === 1 ? "ArrowDown" : v[0] === -1 ? "ArrowLeft" : "ArrowRight";
+      if (on) keys.add(keyName); else keys.delete(keyName);
+    };
+    b.addEventListener("pointerdown", ev => { ev.preventDefault(); set(true); });
+    b.addEventListener("pointerup",   () => set(false));
+    b.addEventListener("pointerleave",() => set(false));
+    b.addEventListener("pointercancel",()=> set(false));
+    host.appendChild(b);
+  }
+  host.style.display = window.matchMedia && window.matchMedia("(pointer: coarse)").matches
+    ? "flex" : "none";
+  host.style.justifyContent = "center";
+  host.style.marginTop = "12px";
+})();
+
+/* 启动 */
+makeMaze();
+buildMap();
+resetPos();
+buildPad();
+renderDigits();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
