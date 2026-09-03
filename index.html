@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>0/1</title>
+<style>
+  :root{--bg:#14161c;--panel:#1d2028;--line:#2a2e3a;--fg:#e6e8ee;--acc:#6cc6ff;}
+  *{box-sizing:border-box;}
+  html,body{margin:0;height:100%;}
+  body{
+    background:radial-gradient(1200px 700px at 50% -10%, #232838 0%, var(--bg) 60%);
+    color:var(--fg);
+    display:flex;align-items:center;justify-content:center;
+    min-height:100vh;padding:24px;
+  }
+  .screen-frame{
+    background:#000;border:1px solid var(--line);border-radius:14px;
+    padding:10px;box-shadow:0 18px 50px rgba(0,0,0,.5);
+    position:relative;
+  }
+  canvas#screen{
+    display:block;width:min(960px,78vw);height:auto;aspect-ratio:16/9;background:#fff;border-radius:6px;
+  }
+  .overlay{
+    position:absolute;inset:10px;border-radius:6px;display:flex;
+    align-items:center;justify-content:center;background:rgba(0,0,0,.35);
+    transition:opacity .25s;cursor:pointer;z-index:2;
+  }
+  .overlay.hidden{opacity:0;pointer-events:none;}
+  .overlay .big{
+    width:86px;height:86px;border-radius:50%;background:#fff;color:#000;
+    display:flex;align-items:center;justify-content:center;
+    font-size:34px;box-shadow:0 6px 24px rgba(0,0,0,.45);user-select:none;
+  }
+  .controls{
+    display:flex;justify-content:center;gap:10px;align-items:center;margin-top:14px;
+  }
+  button{
+    appearance:none;border:1px solid var(--line);background:var(--panel);color:var(--fg);
+    width:46px;height:46px;border-radius:50%;font-size:17px;cursor:pointer;
+    transition:filter .15s, transform .05s;line-height:1;
+  }
+  button:hover{filter:brightness(1.25);}
+  button:active{transform:translateY(1px);}
+  button.primary{background:var(--acc);color:#0b0e14;border-color:transparent;}
+  button:disabled{opacity:.45;cursor:default;}
+  button.rec{background:#e5484d;color:#fff;border-color:transparent;}
+  input[type=range]{
+    width:110px;accent-color:var(--acc);margin-left:6px;filter:invert(.1);
+  }
+</style>
+</head>
+<body>
+<div>
+  <div class="screen-frame">
+    <canvas id="screen" width="960" height="540"></canvas>
+    <div class="overlay" id="overlay"><div class="big">▶</div></div>
+  </div>
+  <div class="controls">
+    <button id="playBtn" class="primary" aria-label="play">▶</button>
+    <button id="replayBtn" disabled aria-label="replay">↺</button>
+    <button id="recBtn" aria-label="record">⏺</button>
+    <input type="range" id="vol" min="0" max="100" value="60" aria-label="volume"/>
+  </div>
+</div>
+<script>
+"use strict";
+/* ================= 数据源：仅画面与音频内部的编码 ================= */
+const VIDEO_PHRASE = "Listen carefully";   // 画面：8-bit ASCII 二进制
+const MORSE_PHRASE = "Show me";            // 音频：白噪音摩斯节拍
+
+const BITS = [...VIDEO_PHRASE]
+  .map(ch => ch.charCodeAt(0).toString(2).padStart(8, "0"))
+  .join("");
+const BIT_LEN = BITS.length;               // 128
+
+/* ================= 画面：8×16 位矩阵，逐字节高亮帧 =================
+   每一帧 = 一个字节（一行 8 位）被加粗放大并以下划线标出，
+   每 FRAME_MS 高亮下移一个字节，16 帧循环 = "Listen carefully" 一遍 */
+const canvas = document.getElementById("screen");
+const ctx = canvas.getContext("2d");
+const W = 960, H = 540;
+const dpr = Math.min(window.devicePixelRatio || 1, 2);
+canvas.width  = W * dpr;
+canvas.height = H * dpr;
+ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+const N_BYTES = 16;                        // 字节数
+const N_BITS  = 8;                         // 每字节位数
+const FRAME_MS = 160;                      // 每帧时长（高亮推进间隔）
+const PAD_Y = 12;
+const CELL_W = W / N_BITS;
+const CELL_H = (H - PAD_Y * 2) / N_BYTES;
+const F_NORMAL = Math.round(CELL_H * 0.78);
+const F_ACTIVE = Math.round(CELL_H * 0.96);
+
+function bitAt(j){ return BITS[(j % BIT_LEN + BIT_LEN) % BIT_LEN]; }
+
+function drawByteFrame(activeByte){
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = "#000000";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  for (let b = 0; b < N_BYTES; b++){
+    const active = (b === activeByte);
+    ctx.font = (active ? "700 " : "400 ")
+             + (active ? F_ACTIVE : F_NORMAL) + "px Consolas,'Courier New',monospace";
+    const yc = PAD_Y + b * CELL_H + CELL_H / 2 + 1;
+    for (let c = 0; c < N_BITS; c++){
+      ctx.fillText(bitAt(b * N_BITS + c), (c + 0.5) * CELL_W, yc);
+    }
+  }
+  // 当前字节行的下划线（保持纯黑白）
+  const y = PAD_Y + (activeByte + 1) * CELL_H - 2;
+  ctx.fillRect(0, y, W, 2);
+}
+
+/* ---------- 视频播放状态 ---------- */
+let playing = false;
+let tStart  = 0;
+let accum   = 0;
+let lastK   = -1;
+const now = () => performance.now();
+const elapsed = () => playing ? accum + (now() - tStart) : accum;
+
+function videoPlay(){ if (!playing){ tStart = now(); playing = true; } }
+function videoPause(){ if (playing){ accum = now() - tStart; playing = false; } }
+function videoReset(){
+  accum = 0; lastK = -1; playing = false;
+  drawByteFrame(0);
+}
+
+requestAnimationFrame(function loop(){
+  if (playing){
+    const k = Math.floor(elapsed() / FRAME_MS) % N_BYTES;
+    if (k !== lastK){ lastK = k; drawByteFrame(k); }
+  }
+  requestAnimationFrame(loop);
+});
+
+/* ================= 音频：白噪音 · "Show me" 摩斯节拍 =================
+   S ...  H ....  O ---  W .--  |  M --  E .
+   点=1u / 划=3u / 符号间=1u / 字母间=3u / 词间=7u，u = 0.09s
+   持续白噪音为底噪，节拍段音量升高 */
+const MORSE = {
+  a:".-",    b:"-...",  c:"-.-.",  d:"-..",   e:".",     f:"..-.",
+  g:"--.",   h:"....",  i:"..",    j:".---",  k:"-.-",   l:".-..",
+  m:"--",    n:"-.",    o:"---",   p:".--.",  q:"--.-",  r:".-.",
+  s:"...",   t:"-",     u:"..-",   v:"...-",  w:".--",   x:"-..-",
+  y:"-.--",  z:"--.."
+};
+const U = 0.09;
+const AMP_ON  = 0.92;
+const AMP_BED = 0.035;
+
+function buildSegments(msg){
+  const segs = [];
+  let t = 0.06;
+  const chars = [...msg];
+  for (let i = 0; i < chars.length; i++){
+    const ch = chars[i];
+    if (ch === " ") continue;
+    const code = MORSE[ch.toLowerCase()];
+    if (!code) continue;
+    const next = chars[i + 1];
+    for (let s = 0; s < code.length; s++){
+      const dur = (code[s] === ".") ? U : U * 3;
+      segs.push({ start: t, end: t + dur });
+      t += dur;
+      if (s < code.length - 1) t += U;
+    }
+    if (next === " ")      t += U * 7;
+    else if (next !== undefined) t += U * 3;
+  }
+  t += 0.35;
+  return { segs, cycleDur: t };
+}
+const MORSE_MSG = buildSegments(MORSE_PHRASE);
+
+/* ---------- Web Audio ---------- */
+let audioCtx = null, master = null, noiseBuf = null;
+let schedulerTimer = null, cycleStart = null;
+let activeSources = new Set();
+let recDest = null;
+
+function initAudio(){
+  if (audioCtx) return;
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return;
+  audioCtx = new AC();
+  master = audioCtx.createGain();
+  master.gain.value = document.getElementById("vol").value / 100;
+  master.connect(audioCtx.destination);
+
+  const len = Math.max(3, MORSE_MSG.cycleDur + 1);
+  noiseBuf = audioCtx.createBuffer(1, Math.ceil(len * audioCtx.sampleRate), audioCtx.sampleRate);
+  const d = noiseBuf.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+
+  cycleStart = audioCtx.currentTime + 0.12;
+  schedulerTimer = setInterval(scheduleAhead, 120);
+}
+
+function scheduleCycle(base){
+  const src = audioCtx.createBufferSource();
+  src.buffer = noiseBuf;
+  src.loop = true;
+  const g = audioCtx.createGain();
+  g.gain.value = AMP_BED;
+  src.connect(g);
+  g.connect(master);
+  src.start(base);
+  for (const sg of MORSE_MSG.segs){
+    g.gain.setTargetAtTime(AMP_ON,  base + sg.start, 0.012);
+    g.gain.setTargetAtTime(AMP_BED, base + sg.end,   0.012);
+  }
+  const stopAt = base + MORSE_MSG.cycleDur + 0.06;
+  src.stop(stopAt);
+  activeSources.add(src);
+  src.onended = () => activeSources.delete(src);
+}
+
+function scheduleAhead(){
+  if (!audioCtx || !playing) return;
+  if (audioCtx.state !== "running"){ audioCtx.resume(); return; }
+  const horizon = audioCtx.currentTime + 0.6;
+  while (cycleStart !== null && cycleStart < horizon){
+    scheduleCycle(cycleStart);
+    cycleStart += MORSE_MSG.cycleDur;
+  }
+}
+
+function audioStart(){
+  initAudio();
+  if (!audioCtx) return;
+  audioCtx.resume();
+  if (cycleStart === null || cycleStart + 0.1 < audioCtx.currentTime)
+    cycleStart = audioCtx.currentTime + 0.12;
+}
+function audioStopAll(){
+  for (const s of activeSources){ try{ s.stop(); }catch(e){} }
+  activeSources.clear();
+  cycleStart = audioCtx ? audioCtx.currentTime + 0.12 : null;
+}
+
+/* ================= 控件（仅图标） ================= */
+const $ = id => document.getElementById(id);
+const playBtn = $("playBtn"), replayBtn = $("replayBtn"), recBtn = $("recBtn");
+const overlay = $("overlay");
+
+function doPlay(){
+  overlay.classList.add("hidden");
+  if (!playing){
+    audioStart();
+    videoPlay();
+    playBtn.innerHTML = "⏸";
+    playBtn.classList.remove("primary");
+    replayBtn.disabled = false;
+  } else {
+    videoPause();
+    if (audioCtx && audioCtx.state === "running") audioCtx.suspend();
+    playBtn.innerHTML = "▶";
+    playBtn.classList.add("primary");
+  }
+}
+function doReplay(){
+  videoReset();
+  if (audioCtx) audioStopAll();
+  audioStart();
+  videoPlay();
+  playBtn.innerHTML = "⏸";
+  playBtn.classList.remove("primary");
+  overlay.classList.add("hidden");
+}
+
+playBtn.addEventListener("click", doPlay);
+replayBtn.addEventListener("click", doReplay);
+overlay.addEventListener("click", doPlay);
+document.addEventListener("keydown", ev => {
+  if (ev.code === "Space" && !recording){ ev.preventDefault(); doPlay(); }
+});
+document.querySelector(".screen-frame").addEventListener("click", ev => {
+  if (ev.target === canvas) doPlay();
+});
+$("vol").addEventListener("input", ev => {
+  if (master) master.gain.value = ev.target.value / 100;
+});
+
+/* ================= 录制（可选） ================= */
+let recording = false;
+recBtn.addEventListener("click", async () => {
+  if (recording) return;
+  try{
+    if (!playing) doPlay();
+    if (audioCtx && audioCtx.state !== "running") await audioCtx.resume();
+    const candidates = [
+      "video/webm;codecs=vp9,opus",
+      "video/webm;codecs=vp8,opus",
+      "video/webm"
+    ];
+    const mime = candidates.find(m =>
+      window.MediaRecorder && MediaRecorder.isTypeSupported(m));
+    if (!window.MediaRecorder || !mime || !canvas.captureStream)
+      throw new Error("recorder unavailable");
+
+    const stream = canvas.captureStream(25);
+    if (audioCtx){
+      recDest = audioCtx.createMediaStreamDestination();
+      master.connect(recDest);
+      const at = recDest.stream.getAudioTracks();
+      if (at.length) stream.addTrack(at[0]);
+    }
+    const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 5_000_000 });
+    const chunks = [];
+    rec.ondataavailable = ev => { if (ev.data && ev.data.size) chunks.push(ev.data); };
+    recording = true;
+    recBtn.disabled = true;
+    recBtn.classList.add("rec");
+    rec.start(250);
+
+    await new Promise(r => setTimeout(r, 12000));
+    rec.stop();
+    await new Promise(r => { rec.onstop = r; });
+
+    const blob = new Blob(chunks, { type: mime.split(";")[0] });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "0-1.webm";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  }catch(e){
+    /* 静默失败 */
+  }finally{
+    recording = false;
+    recBtn.disabled = false;
+    recBtn.classList.remove("rec");
+  }
+});
+
+drawByteFrame(0);
+</script>
+</body>
+</html>
